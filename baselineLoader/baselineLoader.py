@@ -1,383 +1,235 @@
-import logging
 import os
-from typing import Annotated, Optional
-
 import vtk
-
+import qt
+import ctk
 import slicer
-from slicer.i18n import tr as _
-from slicer.i18n import translate
 from slicer.ScriptedLoadableModule import *
-from slicer.util import VTKObservationMixin
-from slicer.parameterNodeWrapper import (
-    parameterNodeWrapper,
-    WithinRange,
-)
-
-from slicer import vtkMRMLScalarVolumeNode
-
-
-#
-# baselineLoader
-#
+import logging
 
 
 class baselineLoader(ScriptedLoadableModule):
-    """Uses ScriptedLoadableModule base class, available at:
-    https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
-    """
-
     def __init__(self, parent):
         ScriptedLoadableModule.__init__(self, parent)
-        self.parent.title = _("baselineLoader")  # TODO: make this more human readable by adding spaces
-        # TODO: set categories (folders where the module shows up in the module selector)
-        self.parent.categories = [translate("qSlicerAbstractCoreModule", "Examples")]
-        self.parent.dependencies = []  # TODO: add here list of module names that this module requires
-        self.parent.contributors = ["John Doe (AnyWare Corp.)"]  # TODO: replace with "Firstname Lastname (Organization)"
-        # TODO: update with short description of the module and a link to online module documentation
-        # _() function marks text as translatable to other languages
-        self.parent.helpText = _("""
-This is an example of scripted loadable module bundled in an extension.
-See more information in <a href="https://github.com/organization/projectname#baselineLoader">module documentation</a>.
-""")
-        # TODO: replace with organization, grant and thanks
-        self.parent.acknowledgementText = _("""
-This file was originally developed by Jean-Christophe Fillion-Robin, Kitware Inc., Andras Lasso, PerkLab,
-and Steve Pieper, Isomics, Inc. and was partially funded by NIH grant 3P41RR013218-12S1.
-""")
-
-        # Additional initialization step after application startup is complete
-        slicer.app.connect("startupCompleted()", registerSampleData)
+        self.parent.title = "Custom Data Loader"
+        self.parent.categories = ["Utilities"]
+        self.parent.dependencies = []
+        self.parent.contributors = ["Your Name"]
+        self.parent.helpText = """
+            Module for automatic loading of data from dropped folders.
+            """
+        self.parent.acknowledgementText = """
+            Developed for custom data loading workflow.
+            """
 
 
-#
-# Register sample data sets in Sample Data module
-#
+class GroupSelectionDialog(qt.QDialog):
+    def __init__(self, total_groups):
+        qt.QDialog.__init__(self)
+        self.setWindowTitle("Select Groups to Load")
+
+        layout = qt.QVBoxLayout(self)
+
+        # Add information label
+        infoLabel = qt.QLabel(
+            f"Found {total_groups} groups.\nEach group contains:\n- 1 deformation field\n- 1 volume\n- 1 segmentation")
+        layout.addWidget(infoLabel)
+
+        # Add slider
+        self.slider = qt.QSlider(qt.Qt.Horizontal)
+        self.slider.setMinimum(1)
+        self.slider.setMaximum(total_groups)
+        self.slider.setValue(1)
+
+        # Add label to show current value
+        self.valueLabel = qt.QLabel("Loading: 1 group")
+        self.slider.valueChanged.connect(self.updateLabel)
+
+        layout.addWidget(self.valueLabel)
+        layout.addWidget(self.slider)
+
+        # Add OK and Cancel buttons
+        self.buttonBox = qt.QDialogButtonBox()
+        self.buttonBox.addButton(qt.QDialogButtonBox.Ok)
+        self.buttonBox.addButton(qt.QDialogButtonBox.Cancel)
+        self.buttonBox.accepted.connect(self.accept)
+        self.buttonBox.rejected.connect(self.reject)
+        layout.addWidget(self.buttonBox)
+
+    def updateLabel(self, value):
+        self.valueLabel.text = f"Loading: {value} group{'s' if value > 1 else ''}"
+
+    def getSelectedCount(self):
+        return self.slider.value
 
 
-def registerSampleData():
-    """Add data sets to Sample Data module."""
-    # It is always recommended to provide sample data for users to make it easy to try the module,
-    # but if no sample data is available then this method (and associated startupCompeted signal connection) can be removed.
+class DropWidget(qt.QFrame):
+    def __init__(self, parent=None):
+        # Get the widget's layout widget as the parent
+        if parent is not None:
+            parent_widget = parent.parent
+        else:
+            parent_widget = None
+        qt.QFrame.__init__(self, parent_widget)
 
-    import SampleData
+        self.setAcceptDrops(True)
+        self.setStyleSheet(
+            "QFrame { border: 2px dashed #999; border-radius: 5px; }")
+        self.setMinimumHeight(100)
 
-    iconsPath = os.path.join(os.path.dirname(__file__), "Resources/Icons")
+        # Create layout
+        layout = qt.QVBoxLayout(self)
+        label = qt.QLabel("Drop folder here")
+        label.setAlignment(qt.Qt.AlignCenter)
+        layout.addWidget(label)
 
-    # To ensure that the source code repository remains small (can be downloaded and installed quickly)
-    # it is recommended to store data sets that are larger than a few MB in a Github release.
+        # Store reference to parent widget for accessing configuration
+        self.moduleWidget = parent
 
-    # baselineLoader1
-    SampleData.SampleDataLogic.registerCustomSampleDataSource(
-        # Category and sample name displayed in Sample Data module
-        category="baselineLoader",
-        sampleName="baselineLoader1",
-        # Thumbnail should have size of approximately 260x280 pixels and stored in Resources/Icons folder.
-        # It can be created by Screen Capture module, "Capture all views" option enabled, "Number of images" set to "Single".
-        thumbnailFileName=os.path.join(iconsPath, "baselineLoader1.png"),
-        # Download URL and target file name
-        uris="https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/998cb522173839c78657f4bc0ea907cea09fd04e44601f17c82ea27927937b95",
-        fileNames="baselineLoader1.nrrd",
-        # Checksum to ensure file integrity. Can be computed by this command:
-        #  import hashlib; print(hashlib.sha256(open(filename, "rb").read()).hexdigest())
-        checksums="SHA256:998cb522173839c78657f4bc0ea907cea09fd04e44601f17c82ea27927937b95",
-        # This node name will be used when the data set is loaded
-        nodeNames="baselineLoader1",
-    )
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.accept()
+            self.setStyleSheet(
+                "QFrame { border: 2px dashed #44A; border-radius: 5px; background: #EEF; }")
+        else:
+            event.ignore()
 
-    # baselineLoader2
-    SampleData.SampleDataLogic.registerCustomSampleDataSource(
-        # Category and sample name displayed in Sample Data module
-        category="baselineLoader",
-        sampleName="baselineLoader2",
-        thumbnailFileName=os.path.join(iconsPath, "baselineLoader2.png"),
-        # Download URL and target file name
-        uris="https://github.com/Slicer/SlicerTestingData/releases/download/SHA256/1a64f3f422eb3d1c9b093d1a18da354b13bcf307907c66317e2463ee530b7a97",
-        fileNames="baselineLoader2.nrrd",
-        checksums="SHA256:1a64f3f422eb3d1c9b093d1a18da354b13bcf307907c66317e2463ee530b7a97",
-        # This node name will be used when the data set is loaded
-        nodeNames="baselineLoader2",
-    )
+    def dragLeaveEvent(self, event):
+        self.setStyleSheet(
+            "QFrame { border: 2px dashed #999; border-radius: 5px; }")
 
+    def dropEvent(self, event):
+        self.setStyleSheet(
+            "QFrame { border: 2px dashed #999; border-radius: 5px; }")
+        paths = []
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if os.path.isdir(path):
+                paths.append(path)
 
-#
-# baselineLoaderParameterNode
-#
-
-
-@parameterNodeWrapper
-class baselineLoaderParameterNode:
-    """
-    The parameters needed by module.
-
-    inputVolume - The volume to threshold.
-    imageThreshold - The value at which to threshold the input volume.
-    invertThreshold - If true, will invert the threshold.
-    thresholdedVolume - The output volume that will contain the thresholded volume.
-    invertedVolume - The output volume that will contain the inverted thresholded volume.
-    """
-
-    inputVolume: vtkMRMLScalarVolumeNode
-    imageThreshold: Annotated[float, WithinRange(-100, 500)] = 100
-    invertThreshold: bool = False
-    thresholdedVolume: vtkMRMLScalarVolumeNode
-    invertedVolume: vtkMRMLScalarVolumeNode
+        if paths and self.moduleWidget:
+            self.moduleWidget.logic.loadDataFromFolders(
+                paths[0])  # Use first dropped folder
 
 
-#
-# baselineLoaderWidget
-#
-
-
-class baselineLoaderWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
-    """Uses ScriptedLoadableModuleWidget base class, available at:
-    https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
-    """
-
-    def __init__(self, parent=None) -> None:
-        """Called when the user opens the module the first time and the widget is initialized."""
+class baselineLoaderWidget(ScriptedLoadableModuleWidget):
+    def __init__(self, parent=None):
         ScriptedLoadableModuleWidget.__init__(self, parent)
-        VTKObservationMixin.__init__(self)  # needed for parameter node observation
-        self.logic = None
-        self._parameterNode = None
-        self._parameterNodeGuiTag = None
-
-    def setup(self) -> None:
-        """Called when the user opens the module the first time and the widget is initialized."""
-        ScriptedLoadableModuleWidget.setup(self)
-
-        # Load widget from .ui file (created by Qt Designer).
-        # Additional widgets can be instantiated manually and added to self.layout.
-        uiWidget = slicer.util.loadUI(self.resourcePath("UI/baselineLoader.ui"))
-        self.layout.addWidget(uiWidget)
-        self.ui = slicer.util.childWidgetVariables(uiWidget)
-
-        # Set scene in MRML widgets. Make sure that in Qt designer the top-level qMRMLWidget's
-        # "mrmlSceneChanged(vtkMRMLScene*)" signal in is connected to each MRML widget's.
-        # "setMRMLScene(vtkMRMLScene*)" slot.
-        uiWidget.setMRMLScene(slicer.mrmlScene)
-
-        # Create logic class. Logic implements all computations that should be possible to run
-        # in batch mode, without a graphical user interface.
         self.logic = baselineLoaderLogic()
 
-        # Connections
+    def setup(self):
+        ScriptedLoadableModuleWidget.setup(self)
 
-        # These connections ensure that we update parameter node when scene is closed
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
+        # Add control panel
+        controlsLayout = qt.QHBoxLayout()
 
-        # Buttons
-        self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
+        # Add "Load all" checkbox
+        self.loadAllCheckBox = qt.QCheckBox()
+        self.loadAllCheckBox.checked = True
+        loadAllLabel = qt.QLabel("Load all")
+        controlsLayout.addWidget(loadAllLabel)
+        controlsLayout.addWidget(self.loadAllCheckBox)
 
-        # Make sure parameter node is initialized (needed for module reload)
-        self.initializeParameterNode()
+        # Add indices input
+        indicesLabel = qt.QLabel("Indices:")
+        self.indicesInput = qt.QLineEdit()
+        # Disabled by default since checkbox is checked
+        self.indicesInput.setEnabled(False)
+        self.indicesInput.setToolTip(
+            "Enter comma-separated indices (e.g., 1,3,4)")
+        controlsLayout.addWidget(indicesLabel)
+        controlsLayout.addWidget(self.indicesInput)
 
-    def cleanup(self) -> None:
-        """Called when the application closes and the module widget is destroyed."""
-        self.removeObservers()
+        # Add stretch to push everything to the left
+        controlsLayout.addStretch()
 
-    def enter(self) -> None:
-        """Called each time the user opens this module."""
-        # Make sure parameter node exists and observed
-        self.initializeParameterNode()
+        # Connect checkbox to enable/disable indices input
+        self.loadAllCheckBox.connect(
+            'stateChanged(int)', self.onLoadAllStateChanged)
 
-    def exit(self) -> None:
-        """Called each time the user opens a different module."""
-        # Do not react to parameter node changes (GUI will be updated when the user enters into the module)
-        if self._parameterNode:
-            self._parameterNode.disconnectGui(self._parameterNodeGuiTag)
-            self._parameterNodeGuiTag = None
-            self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
+        # Add controls layout to main layout
+        controlWidget = qt.QWidget()
+        controlWidget.setLayout(controlsLayout)
+        self.layout.addWidget(controlWidget)
 
-    def onSceneStartClose(self, caller, event) -> None:
-        """Called just before the scene is closed."""
-        # Parameter node will be reset, do not use it anymore
-        self.setParameterNode(None)
+        # Add drop zone
+        self.dropWidget = DropWidget(self)
+        self.layout.addWidget(self.dropWidget)
+        self.layout.addStretch(1)
 
-    def onSceneEndClose(self, caller, event) -> None:
-        """Called just after the scene is closed."""
-        # If this module is shown while the scene is closed then recreate a new parameter node immediately
-        if self.parent.isEntered:
-            self.initializeParameterNode()
+        self.logic.DropWidget = self.dropWidget
 
-    def initializeParameterNode(self) -> None:
-        """Ensure parameter node exists and observed."""
-        # Parameter node stores all user choices in parameter values, node selections, etc.
-        # so that when the scene is saved and reloaded, these settings are restored.
-
-        self.setParameterNode(self.logic.getParameterNode())
-
-        # Select default input nodes if nothing is selected yet to save a few clicks for the user
-        if not self._parameterNode.inputVolume:
-            firstVolumeNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
-            if firstVolumeNode:
-                self._parameterNode.inputVolume = firstVolumeNode
-
-    def setParameterNode(self, inputParameterNode: Optional[baselineLoaderParameterNode]) -> None:
-        """
-        Set and observe parameter node.
-        Observation is needed because when the parameter node is changed then the GUI must be updated immediately.
-        """
-
-        if self._parameterNode:
-            self._parameterNode.disconnectGui(self._parameterNodeGuiTag)
-            self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
-        self._parameterNode = inputParameterNode
-        if self._parameterNode:
-            # Note: in the .ui file, a Qt dynamic property called "SlicerParameterName" is set on each
-            # ui element that needs connection.
-            self._parameterNodeGuiTag = self._parameterNode.connectGui(self.ui)
-            self.addObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
-            self._checkCanApply()
-
-    def _checkCanApply(self, caller=None, event=None) -> None:
-        if self._parameterNode and self._parameterNode.inputVolume and self._parameterNode.thresholdedVolume:
-            self.ui.applyButton.toolTip = _("Compute output volume")
-            self.ui.applyButton.enabled = True
-        else:
-            self.ui.applyButton.toolTip = _("Select input and output volume nodes")
-            self.ui.applyButton.enabled = False
-
-    def onApplyButton(self) -> None:
-        """Run processing when user clicks "Apply" button."""
-        with slicer.util.tryWithErrorDisplay(_("Failed to compute results."), waitCursor=True):
-            # Compute output
-            self.logic.process(self.ui.inputSelector.currentNode(), self.ui.outputSelector.currentNode(),
-                               self.ui.imageThresholdSliderWidget.value, self.ui.invertOutputCheckBox.checked)
-
-            # Compute inverted output (if needed)
-            if self.ui.invertedOutputSelector.currentNode():
-                # If additional output volume is selected then result with inverted threshold is written there
-                self.logic.process(self.ui.inputSelector.currentNode(), self.ui.invertedOutputSelector.currentNode(),
-                                   self.ui.imageThresholdSliderWidget.value, not self.ui.invertOutputCheckBox.checked, showResult=False)
-
-
-#
-# baselineLoaderLogic
-#
+    def onLoadAllStateChanged(self, state):
+        self.indicesInput.setEnabled(not state)
 
 
 class baselineLoaderLogic(ScriptedLoadableModuleLogic):
-    """This class should implement all the actual
-    computation done by your module.  The interface
-    should be such that other python code can import
-    this class and make use of the functionality without
-    requiring an instance of the Widget.
-    Uses ScriptedLoadableModuleLogic base class, available at:
-    https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
-    """
+    def __init__(self):
+        self.DropWidget = None
 
-    def __init__(self) -> None:
-        """Called when the logic class is instantiated. Can be used for initializing member variables."""
-        ScriptedLoadableModuleLogic.__init__(self)
-
-    def getParameterNode(self):
-        return baselineLoaderParameterNode(super().getParameterNode())
-
-    def process(self,
-                inputVolume: vtkMRMLScalarVolumeNode,
-                outputVolume: vtkMRMLScalarVolumeNode,
-                imageThreshold: float,
-                invert: bool = False,
-                showResult: bool = True) -> None:
+    def loadDataFromFolders(self, rootPath):
         """
-        Run the processing algorithm.
-        Can be used without GUI widget.
-        :param inputVolume: volume to be thresholded
-        :param outputVolume: thresholding result
-        :param imageThreshold: values above/below this threshold will be set to 0
-        :param invert: if True then values above the threshold will be set to 0, otherwise values below are set to 0
-        :param showResult: show output volume in slice viewers
+        Load data from the specified directory structure
         """
+        try:
+            # First count how many groups we have
+            deformationsPath = os.path.join(rootPath, "deformations")
+            deformation_files = [f for f in os.listdir(deformationsPath)
+                                 if f.endswith(('.nii.gz'))]
 
-        if not inputVolume or not outputVolume:
-            raise ValueError("Input or output volume is invalid")
+            # srot the files
+            deformation_files.sort()
 
-        import time
+            total_groups = len(deformation_files)
 
-        startTime = time.time()
-        logging.info("Processing started")
+            # Determine which groups to load
+            groups_to_load = []
 
-        # Compute the thresholded output volume using the "Threshold Scalar Volume" CLI module
-        cliParams = {
-            "InputVolume": inputVolume.GetID(),
-            "OutputVolume": outputVolume.GetID(),
-            "ThresholdValue": imageThreshold,
-            "ThresholdType": "Above" if invert else "Below",
-        }
-        cliNode = slicer.cli.run(slicer.modules.thresholdscalarvolume, None, cliParams, wait_for_completion=True, update_display=showResult)
-        # We don't need the CLI module node anymore, remove it to not clutter the scene with it
-        slicer.mrmlScene.RemoveNode(cliNode)
+            if self.DropWidget.moduleWidget.loadAllCheckBox.checked:
+                # Load all groups
+                groups_to_load = list(range(total_groups))
+            else:
+                indices_text = self.DropWidget.moduleWidget.indicesInput.text.strip()
+                if indices_text:
+                    # Parse indices from text input
+                    try:
+                        indices = [int(idx.strip())
+                                   for idx in indices_text.split(',')]
+                        groups_to_load = [
+                            i for i in indices if 0 <= i < total_groups]
+                    except ValueError:
+                        slicer.util.errorDisplay(
+                            "Invalid indices format. Please use comma-separated numbers.")
+                        return
 
-        stopTime = time.time()
-        logging.info(f"Processing completed in {stopTime-startTime:.2f} seconds")
+            # Load the selected groups
+            for i in groups_to_load:
+                # Load displacement field
+                filepath = os.path.join(deformationsPath, deformation_files[i])
+                logging.info(f"Loading displacement field: {filepath}")
+                slicer.util.loadTransform(filepath)
 
+                # Get base name for matching deformed files
+                base_name = deformation_files[i].replace(
+                    '_deformation_', '_deformed_')
+                deformedPath = os.path.join(rootPath, "deformed")
 
-#
-# baselineLoaderTest
-#
+                # Load volume
+                volume_name = base_name
+                volume_path = os.path.join(deformedPath, volume_name)
+                if os.path.exists(volume_path):
+                    logging.info(f"Loading volume: {volume_path}")
+                    slicer.util.loadVolume(volume_path)
 
+                # Load segmentation
+                seg_name = base_name.replace('.nii.gz', '_seg.nii.gz')
+                seg_path = os.path.join(deformedPath, seg_name)
+                if os.path.exists(seg_path):
+                    logging.info(f"Loading segmentation: {seg_path}")
+                    slicer.util.loadSegmentation(seg_path)
 
-class baselineLoaderTest(ScriptedLoadableModuleTest):
-    """
-    This is the test case for your scripted module.
-    Uses ScriptedLoadableModuleTest base class, available at:
-    https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
-    """
+            # switch to data module
+            slicer.util.selectModule("Data")
 
-    def setUp(self):
-        """Do whatever is needed to reset the state - typically a scene clear will be enough."""
-        slicer.mrmlScene.Clear()
-
-    def runTest(self):
-        """Run as few or as many tests as needed here."""
-        self.setUp()
-        self.test_baselineLoader1()
-
-    def test_baselineLoader1(self):
-        """Ideally you should have several levels of tests.  At the lowest level
-        tests should exercise the functionality of the logic with different inputs
-        (both valid and invalid).  At higher levels your tests should emulate the
-        way the user would interact with your code and confirm that it still works
-        the way you intended.
-        One of the most important features of the tests is that it should alert other
-        developers when their changes will have an impact on the behavior of your
-        module.  For example, if a developer removes a feature that you depend on,
-        your test should break so they know that the feature is needed.
-        """
-
-        self.delayDisplay("Starting the test")
-
-        # Get/create input data
-
-        import SampleData
-
-        registerSampleData()
-        inputVolume = SampleData.downloadSample("baselineLoader1")
-        self.delayDisplay("Loaded test data set")
-
-        inputScalarRange = inputVolume.GetImageData().GetScalarRange()
-        self.assertEqual(inputScalarRange[0], 0)
-        self.assertEqual(inputScalarRange[1], 695)
-
-        outputVolume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
-        threshold = 100
-
-        # Test the module logic
-
-        logic = baselineLoaderLogic()
-
-        # Test algorithm with non-inverted threshold
-        logic.process(inputVolume, outputVolume, threshold, True)
-        outputScalarRange = outputVolume.GetImageData().GetScalarRange()
-        self.assertEqual(outputScalarRange[0], inputScalarRange[0])
-        self.assertEqual(outputScalarRange[1], threshold)
-
-        # Test algorithm with inverted threshold
-        logic.process(inputVolume, outputVolume, threshold, False)
-        outputScalarRange = outputVolume.GetImageData().GetScalarRange()
-        self.assertEqual(outputScalarRange[0], inputScalarRange[0])
-        self.assertEqual(outputScalarRange[1], inputScalarRange[1])
-
-        self.delayDisplay("Test passed")
+        except Exception as e:
+            logging.error(f"Error loading data: {str(e)}")
+            slicer.util.errorDisplay(f"Error loading data: {str(e)}")
