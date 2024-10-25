@@ -179,6 +179,22 @@ class baselineLoaderLogic(ScriptedLoadableModuleLogic):
     def __init__(self):
         self.DropWidget = None
 
+    def collapse_all_segmentations(self) -> None:
+
+        subjectHierarchyNode = slicer.mrmlScene.GetSubjectHierarchyNode()
+
+        if subjectHierarchyNode:
+            itemIDs = vtk.vtkIdList()
+            subjectHierarchyNode.GetItemChildren(
+                subjectHierarchyNode.GetSceneItemID(), itemIDs, True)
+
+            for i in range(itemIDs.GetNumberOfIds()):
+                itemID = itemIDs.GetId(i)
+                node = subjectHierarchyNode.GetItemDataNode(itemID)
+                if node and node.IsA("vtkMRMLSegmentationNode"):
+
+                    subjectHierarchyNode.SetItemExpanded(itemID, False)
+
     def loadOriginalData(self, file_name: str) -> None:
         file_name = file_name.replace('.nii.gz', '')
         moving_name, fixed_name = file_name.split('_deformed_to_')
@@ -267,6 +283,8 @@ class baselineLoaderLogic(ScriptedLoadableModuleLogic):
 
             # switch to data module
             slicer.util.selectModule("Data")
+
+            self.collapse_all_segmentations()
 
         except Exception as e:
             logging.error(f"Error loading data: {str(e)}")
