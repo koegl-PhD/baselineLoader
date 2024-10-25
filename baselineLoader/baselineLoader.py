@@ -1,10 +1,14 @@
 import os
+import glob
+import logging
+
+from typing import List
+
 import vtk
 import qt
 import ctk
 import slicer
 from slicer.ScriptedLoadableModule import *
-import logging
 
 
 class baselineLoader(ScriptedLoadableModule):
@@ -119,6 +123,15 @@ class baselineLoaderWidget(ScriptedLoadableModuleWidget):
     def setup(self):
         ScriptedLoadableModuleWidget.setup(self)
 
+        # Add path selector at the top
+        pathLayout = qt.QHBoxLayout()
+        pathLabel = qt.QLabel("Data directory:")
+        pathLayout.addWidget(pathLabel)
+        self.pathLineEdit = ctk.ctkPathLineEdit()
+        self.pathLineEdit.setCurrentPath("/data/LungCT_preprocessed_new")
+        pathLayout.addWidget(self.pathLineEdit)
+        self.layout.addLayout(pathLayout)
+
         # Add control panel
         controlsLayout = qt.QHBoxLayout()
 
@@ -165,6 +178,45 @@ class baselineLoaderWidget(ScriptedLoadableModuleWidget):
 class baselineLoaderLogic(ScriptedLoadableModuleLogic):
     def __init__(self):
         self.DropWidget = None
+
+    def collapse_all_segmentations(self) -> None:
+
+        subjectHierarchyNode = slicer.mrmlScene.GetSubjectHierarchyNode()
+
+        if subjectHierarchyNode:
+            itemIDs = vtk.vtkIdList()
+            subjectHierarchyNode.GetItemChildren(
+                subjectHierarchyNode.GetSceneItemID(), itemIDs, True)
+
+            for i in range(itemIDs.GetNumberOfIds()):
+                itemID = itemIDs.GetId(i)
+                node = subjectHierarchyNode.GetItemDataNode(itemID)
+                if node and node.IsA("vtkMRMLSegmentationNode"):
+
+                    subjectHierarchyNode.SetItemExpanded(itemID, False)
+
+    def loadOriginalData(self, file_name: str) -> None:
+        file_name = file_name.replace('.nii.gz', '')
+        moving_name, fixed_name = file_name.split('_deformed_to_')
+
+        data_path: str = str(
+            self.DropWidget.moduleWidget.pathLineEdit.currentPath)
+
+        if data_path == "":
+            return
+
+        # find all files recrusively in data_path
+        for file in glob.glob(data_path + f"/*/{moving_name}.nii.gz", recursive=True):
+            if any([x in file.lower() for x in ['mask', 'seg', 'label']]):
+                slicer.util.loadSegmentation(file)
+            else:
+                slicer.util.loadVolume(file)
+
+        for file in glob.glob(data_path + f"/*/{fixed_name}.nii.gz", recursive=True):
+            if any([x in file.lower() for x in ['mask', 'seg', 'label']]):
+                slicer.util.loadSegmentation(file)
+            else:
+                slicer.util.loadVolume(file)
 
     def loadDataFromFolders(self, rootPath):
         """
@@ -227,8 +279,12 @@ class baselineLoaderLogic(ScriptedLoadableModuleLogic):
                     logging.info(f"Loading segmentation: {seg_path}")
                     slicer.util.loadSegmentation(seg_path)
 
+                self.loadOriginalData(volume_name)
+
             # switch to data module
             slicer.util.selectModule("Data")
+
+            self.collapse_all_segmentations()
 
         except Exception as e:
             logging.error(f"Error loading data: {str(e)}")
