@@ -119,13 +119,52 @@ class baselineLoaderWidget(ScriptedLoadableModuleWidget):
     def setup(self):
         ScriptedLoadableModuleWidget.setup(self)
 
-        # Add drop zone directly to main layout
+        # Add control panel
+        controlsLayout = qt.QHBoxLayout()
+
+        # Add "Load all" checkbox
+        self.loadAllCheckBox = qt.QCheckBox()
+        self.loadAllCheckBox.checked = True
+        loadAllLabel = qt.QLabel("Load all")
+        controlsLayout.addWidget(loadAllLabel)
+        controlsLayout.addWidget(self.loadAllCheckBox)
+
+        # Add indices input
+        indicesLabel = qt.QLabel("Indices:")
+        self.indicesInput = qt.QLineEdit()
+        # Disabled by default since checkbox is checked
+        self.indicesInput.setEnabled(False)
+        self.indicesInput.setToolTip(
+            "Enter comma-separated indices (e.g., 1,3,4)")
+        controlsLayout.addWidget(indicesLabel)
+        controlsLayout.addWidget(self.indicesInput)
+
+        # Add stretch to push everything to the left
+        controlsLayout.addStretch()
+
+        # Connect checkbox to enable/disable indices input
+        self.loadAllCheckBox.connect(
+            'stateChanged(int)', self.onLoadAllStateChanged)
+
+        # Add controls layout to main layout
+        controlWidget = qt.QWidget()
+        controlWidget.setLayout(controlsLayout)
+        self.layout.addWidget(controlWidget)
+
+        # Add drop zone
         self.dropWidget = DropWidget(self)
         self.layout.addWidget(self.dropWidget)
         self.layout.addStretch(1)
 
+        self.logic.DropWidget = self.dropWidget
+
+    def onLoadAllStateChanged(self, state):
+        self.indicesInput.setEnabled(not state)
+
 
 class baselineLoaderLogic(ScriptedLoadableModuleLogic):
+    def __init__(self):
+        self.DropWidget = None
 
     def loadDataFromFolders(self, rootPath):
         """
@@ -135,43 +174,61 @@ class baselineLoaderLogic(ScriptedLoadableModuleLogic):
             # First count how many groups we have
             deformationsPath = os.path.join(rootPath, "deformations")
             deformation_files = [f for f in os.listdir(deformationsPath)
-                                 if f.endswith(('.nii.gz', '.nii', '.nrrd'))]
+                                 if f.endswith(('.nii.gz'))]
+
+            # srot the files
+            deformation_files.sort()
+
             total_groups = len(deformation_files)
 
-            # Show dialog to select how many groups to load
-            dialog = GroupSelectionDialog(total_groups)
-            if dialog.exec_():
-                groups_to_load = dialog.getSelectedCount()
+            # Determine which groups to load
+            groups_to_load = []
 
-                # Load the selected number of groups
-                for i in range(groups_to_load):
-                    # Load displacement field
-                    filepath = os.path.join(
-                        deformationsPath, deformation_files[i])
-                    logging.info(f"Loading displacement field: {filepath}")
-                    slicer.util.loadTransform(filepath)
+            if self.DropWidget.moduleWidget.loadAllCheckBox.checked:
+                # Load all groups
+                groups_to_load = list(range(total_groups))
+            else:
+                indices_text = self.DropWidget.moduleWidget.indicesInput.text.strip()
+                if indices_text:
+                    # Parse indices from text input
+                    try:
+                        indices = [int(idx.strip())
+                                   for idx in indices_text.split(',')]
+                        groups_to_load = [
+                            i for i in indices if 0 <= i < total_groups]
+                    except ValueError:
+                        slicer.util.errorDisplay(
+                            "Invalid indices format. Please use comma-separated numbers.")
+                        return
 
-                    # Get base name for matching deformed files
-                    base_name = deformation_files[i].replace(
-                        '_deformation_', '_deformed_')
-                    deformedPath = os.path.join(rootPath, "deformed")
+            # Load the selected groups
+            for i in groups_to_load:
+                # Load displacement field
+                filepath = os.path.join(deformationsPath, deformation_files[i])
+                logging.info(f"Loading displacement field: {filepath}")
+                slicer.util.loadTransform(filepath)
 
-                    # Load volume
-                    volume_name = base_name
-                    volume_path = os.path.join(deformedPath, volume_name)
-                    if os.path.exists(volume_path):
-                        logging.info(f"Loading volume: {volume_path}")
-                        slicer.util.loadVolume(volume_path)
+                # Get base name for matching deformed files
+                base_name = deformation_files[i].replace(
+                    '_deformation_', '_deformed_')
+                deformedPath = os.path.join(rootPath, "deformed")
 
-                    # Load segmentation
-                    seg_name = base_name.replace('.nii.gz', '_seg.nii.gz')
-                    seg_path = os.path.join(deformedPath, seg_name)
-                    if os.path.exists(seg_path):
-                        logging.info(f"Loading segmentation: {seg_path}")
-                        slicer.util.loadSegmentation(seg_path)
+                # Load volume
+                volume_name = base_name
+                volume_path = os.path.join(deformedPath, volume_name)
+                if os.path.exists(volume_path):
+                    logging.info(f"Loading volume: {volume_path}")
+                    slicer.util.loadVolume(volume_path)
 
-                slicer.util.showStatusMessage(
-                    f"Loaded {groups_to_load} groups successfully", 3000)
+                # Load segmentation
+                seg_name = base_name.replace('.nii.gz', '_seg.nii.gz')
+                seg_path = os.path.join(deformedPath, seg_name)
+                if os.path.exists(seg_path):
+                    logging.info(f"Loading segmentation: {seg_path}")
+                    slicer.util.loadSegmentation(seg_path)
+
+            # switch to data module
+            slicer.util.selectModule("Data")
 
         except Exception as e:
             logging.error(f"Error loading data: {str(e)}")
