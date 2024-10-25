@@ -135,29 +135,16 @@ class baselineLoaderWidget(ScriptedLoadableModuleWidget):
         # Add control panel
         controlsLayout = qt.QHBoxLayout()
 
-        # Add "Load all" checkbox
-        self.loadAllCheckBox = qt.QCheckBox()
-        self.loadAllCheckBox.checked = True
-        loadAllLabel = qt.QLabel("Load all")
-        controlsLayout.addWidget(loadAllLabel)
-        controlsLayout.addWidget(self.loadAllCheckBox)
-
         # Add indices input
         indicesLabel = qt.QLabel("Indices:")
         self.indicesInput = qt.QLineEdit()
-        # Disabled by default since checkbox is checked
-        self.indicesInput.setEnabled(False)
         self.indicesInput.setToolTip(
-            "Enter comma-separated indices (e.g., 1,3,4)")
+            "Enter comma-separated indices (e.g., 0,3,4).\nEmpty input means all")
         controlsLayout.addWidget(indicesLabel)
         controlsLayout.addWidget(self.indicesInput)
 
         # Add stretch to push everything to the left
         controlsLayout.addStretch()
-
-        # Connect checkbox to enable/disable indices input
-        self.loadAllCheckBox.connect(
-            'stateChanged(int)', self.onLoadAllStateChanged)
 
         # Add controls layout to main layout
         controlWidget = qt.QWidget()
@@ -170,9 +157,6 @@ class baselineLoaderWidget(ScriptedLoadableModuleWidget):
         self.layout.addStretch(1)
 
         self.logic.DropWidget = self.dropWidget
-
-    def onLoadAllStateChanged(self, state):
-        self.indicesInput.setEnabled(not state)
 
 
 class baselineLoaderLogic(ScriptedLoadableModuleLogic):
@@ -234,24 +218,23 @@ class baselineLoaderLogic(ScriptedLoadableModuleLogic):
             total_groups = len(deformation_files)
 
             # Determine which groups to load
-            groups_to_load = []
 
-            if self.DropWidget.moduleWidget.loadAllCheckBox.checked:
-                # Load all groups
+            indices_text = self.DropWidget.moduleWidget.indicesInput.text.strip()
+            if indices_text == "":
                 groups_to_load = list(range(total_groups))
+
             else:
-                indices_text = self.DropWidget.moduleWidget.indicesInput.text.strip()
-                if indices_text:
-                    # Parse indices from text input
-                    try:
-                        indices = [int(idx.strip())
-                                   for idx in indices_text.split(',')]
-                        groups_to_load = [
-                            i for i in indices if 0 <= i < total_groups]
-                    except ValueError:
-                        slicer.util.errorDisplay(
-                            "Invalid indices format. Please use comma-separated numbers.")
-                        return
+                # Parse indices from text input
+                try:
+                    indices: List[int] = [int(idx.strip())
+                                          for idx in indices_text.split(',')]
+                    groups_to_load: List[int] = [
+                        i for i in indices if 0 <= i < total_groups]
+
+                except ValueError:
+                    slicer.util.errorDisplay(
+                        "Invalid indices format. Please use comma-separated numbers.")
+                    return
 
             # Load the selected groups
             for i in groups_to_load:
