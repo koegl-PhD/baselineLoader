@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Literal
 
 import vtk
 
@@ -29,11 +29,15 @@ class baselineLoader(ScriptedLoadableModule):
 
     def __init__(self, parent):
         ScriptedLoadableModule.__init__(self, parent)
-        self.parent.title = _("baselineLoader")  # TODO: make this more human readable by adding spaces
+        # TODO: make this more human readable by adding spaces
+        self.parent.title = _("baselineLoader")
         # TODO: set categories (folders where the module shows up in the module selector)
-        self.parent.categories = [translate("qSlicerAbstractCoreModule", "Examples")]
-        self.parent.dependencies = []  # TODO: add here list of module names that this module requires
-        self.parent.contributors = ["John Doe (AnyWare Corp.)"]  # TODO: replace with "Firstname Lastname (Organization)"
+        self.parent.categories = [
+            translate("qSlicerAbstractCoreModule", "Examples")]
+        # TODO: add here list of module names that this module requires
+        self.parent.dependencies = []
+        # TODO: replace with "Firstname Lastname (Organization)"
+        self.parent.contributors = ["John Doe (AnyWare Corp.)"]
         # TODO: update with short description of the module and a link to online module documentation
         # _() function marks text as translatable to other languages
         self.parent.helpText = _("""
@@ -124,6 +128,52 @@ class baselineLoaderParameterNode:
     invertedVolume: vtkMRMLScalarVolumeNode
 
 
+class DropWidget(qt.QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setStyleSheet(
+            "QFrame { border: 2px dashed #999; border-radius: 5px; }")
+        self.setMinimumHeight(100)
+
+        # Create layout
+        layout = qt.QVBoxLayout(self)
+        label = qt.QLabel("Drop folder here")
+        label.setAlignment(qt.Qt.AlignCenter)
+        layout.addWidget(label)
+
+        # Store reference to parent widget for accessing configuration
+        self.moduleWidget = parent
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.accept()
+            self.setStyleSheet(
+                "QFrame { border: 2px dashed #44A; border-radius: 5px; background: #EEF; }")
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self.setStyleSheet(
+            "QFrame { border: 2px dashed #999; border-radius: 5px; }")
+
+    def dropEvent(self, event):
+        self.setStyleSheet(
+            "QFrame { border: 2px dashed #999; border-radius: 5px; }")
+        paths = []
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if os.path.isdir(path):
+                paths.append(path)
+
+        if paths:
+            self.moduleWidget.logic.loadDataFromFolders(
+                paths[0],  # Use first dropped folder
+                self.moduleWidget.volumePath.text,
+                self.moduleWidget.segPath.text,
+                self.moduleWidget.defPath.text
+            )
+
 #
 # baselineLoaderWidget
 #
@@ -137,7 +187,8 @@ class baselineLoaderWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     def __init__(self, parent=None) -> None:
         """Called when the user opens the module the first time and the widget is initialized."""
         ScriptedLoadableModuleWidget.__init__(self, parent)
-        VTKObservationMixin.__init__(self)  # needed for parameter node observation
+        # needed for parameter node observation
+        VTKObservationMixin.__init__(self)
         self.logic = None
         self._parameterNode = None
         self._parameterNodeGuiTag = None
@@ -148,7 +199,8 @@ class baselineLoaderWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         # Load widget from .ui file (created by Qt Designer).
         # Additional widgets can be instantiated manually and added to self.layout.
-        uiWidget = slicer.util.loadUI(self.resourcePath("UI/baselineLoader.ui"))
+        uiWidget = slicer.util.loadUI(
+            self.resourcePath("UI/baselineLoader.ui"))
         self.layout.addWidget(uiWidget)
         self.ui = slicer.util.childWidgetVariables(uiWidget)
 
@@ -164,14 +216,24 @@ class baselineLoaderWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Connections
 
         # These connections ensure that we update parameter node when scene is closed
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
+        self.addObserver(
+            slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
+        self.addObserver(slicer.mrmlScene,
+                         slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
 
         # Buttons
-        self.ui.applyButton.connect("clicked(bool)", self.onApplyButton)
+        self.ui.loadButton.connect("clicked(bool)", self.onLoadButton)
+
+        x = 0
+        # set inital path for load_path_dropdown
+        # self.ui.load_path_dropdown.setCurrentPath(
+        #     os.path.join(os.path.dirname(__file__), "Resources
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
+
+        # Set up drag and drop
+        self.dropWidget = DropWidget(self)
 
     def cleanup(self) -> None:
         """Called when the application closes and the module widget is destroyed."""
@@ -188,7 +250,8 @@ class baselineLoaderWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         if self._parameterNode:
             self._parameterNode.disconnectGui(self._parameterNodeGuiTag)
             self._parameterNodeGuiTag = None
-            self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
+            self.removeObserver(
+                self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
 
     def onSceneStartClose(self, caller, event) -> None:
         """Called just before the scene is closed."""
@@ -210,7 +273,8 @@ class baselineLoaderWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         # Select default input nodes if nothing is selected yet to save a few clicks for the user
         if not self._parameterNode.inputVolume:
-            firstVolumeNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
+            firstVolumeNode = slicer.mrmlScene.GetFirstNodeByClass(
+                "vtkMRMLScalarVolumeNode")
             if firstVolumeNode:
                 self._parameterNode.inputVolume = firstVolumeNode
 
@@ -222,36 +286,56 @@ class baselineLoaderWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         if self._parameterNode:
             self._parameterNode.disconnectGui(self._parameterNodeGuiTag)
-            self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
+            self.removeObserver(
+                self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
         self._parameterNode = inputParameterNode
         if self._parameterNode:
             # Note: in the .ui file, a Qt dynamic property called "SlicerParameterName" is set on each
             # ui element that needs connection.
             self._parameterNodeGuiTag = self._parameterNode.connectGui(self.ui)
-            self.addObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
+            self.addObserver(self._parameterNode,
+                             vtk.vtkCommand.ModifiedEvent, self._checkCanApply)
             self._checkCanApply()
 
     def _checkCanApply(self, caller=None, event=None) -> None:
-        if self._parameterNode and self._parameterNode.inputVolume and self._parameterNode.thresholdedVolume:
-            self.ui.applyButton.toolTip = _("Compute output volume")
-            self.ui.applyButton.enabled = True
-        else:
-            self.ui.applyButton.toolTip = _("Select input and output volume nodes")
-            self.ui.applyButton.enabled = False
+        # if self._parameterNode and self._parameterNode.inputVolume and self._parameterNode.thresholdedVolume:
+        #     self.ui.applyButton.toolTip = _("Compute output volume")
+        #     self.ui.applyButton.enabled = True
+        # else:
+        #     self.ui.applyButton.toolTip = _(
+        #         "Select input and output volume nodes")
+        #     self.ui.applyButton.enabled = False
+        pass
 
-    def onApplyButton(self) -> None:
+    def onLoadButton(self) -> None:
         """Run processing when user clicks "Apply" button."""
         with slicer.util.tryWithErrorDisplay(_("Failed to compute results."), waitCursor=True):
-            # Compute output
-            self.logic.process(self.ui.inputSelector.currentNode(), self.ui.outputSelector.currentNode(),
-                               self.ui.imageThresholdSliderWidget.value, self.ui.invertOutputCheckBox.checked)
+            pass
 
-            # Compute inverted output (if needed)
-            if self.ui.invertedOutputSelector.currentNode():
-                # If additional output volume is selected then result with inverted threshold is written there
-                self.logic.process(self.ui.inputSelector.currentNode(), self.ui.invertedOutputSelector.currentNode(),
-                                   self.ui.imageThresholdSliderWidget.value, not self.ui.invertOutputCheckBox.checked, showResult=False)
+    def dragEnterEvent(self, event):
+        """Handle drag enter event"""
+        if event.mimeData().hasUrls():
+            event.accept()
+        else:
+            event.ignore()
 
+    def dropEvent(self, event):
+        """Handle drop event"""
+        paths = []
+        for url in event.mimeData().urls():
+            path = url.toLocalFile()
+            if os.path.isdir(path):
+                paths.append(path)
+
+        if paths:
+            x = 0
+            return
+            self.logic.loadDataFromFolders(
+                paths[0],  # Use first dropped folder
+                self.volumePath.text,
+                self.segPath.text,
+                self.defPath.text
+            )
 
 #
 # baselineLoaderLogic
@@ -306,13 +390,47 @@ class baselineLoaderLogic(ScriptedLoadableModuleLogic):
             "ThresholdValue": imageThreshold,
             "ThresholdType": "Above" if invert else "Below",
         }
-        cliNode = slicer.cli.run(slicer.modules.thresholdscalarvolume, None, cliParams, wait_for_completion=True, update_display=showResult)
+        cliNode = slicer.cli.run(slicer.modules.thresholdscalarvolume, None,
+                                 cliParams, wait_for_completion=True, update_display=showResult)
         # We don't need the CLI module node anymore, remove it to not clutter the scene with it
         slicer.mrmlScene.RemoveNode(cliNode)
 
         stopTime = time.time()
-        logging.info(f"Processing completed in {stopTime-startTime:.2f} seconds")
+        logging.info(
+            f"Processing completed in {stopTime-startTime:.2f} seconds")
 
+    def loadDataFromFolders(self, rootPath, volumesDir, segDir, defDir):
+        """
+        Load data from the specified folder structure
+        """
+        # Load volumes
+        volumePath = os.path.join(rootPath, volumesDir)
+        if os.path.exists(volumePath):
+            for filename in os.listdir(volumePath):
+                if filename.endswith(('.nrrd', '.nii', '.nii.gz')):
+                    filepath = os.path.join(volumePath, filename)
+                    logging.info(f"Loading volume: {filepath}")
+                    slicer.util.loadVolume(filepath)
+
+        # Load segmentations
+        segPath = os.path.join(rootPath, segDir)
+        if os.path.exists(segPath):
+            for filename in os.listdir(segPath):
+                if filename.endswith(('.seg.nrrd', '.seg.nii', '.seg.nii.gz')):
+                    filepath = os.path.join(segPath, filename)
+                    logging.info(f"Loading segmentation: {filepath}")
+                    slicer.util.loadSegmentation(filepath)
+
+        # Load displacement fields
+        defPath = os.path.join(rootPath, defDir)
+        if os.path.exists(defPath):
+            for filename in os.listdir(defPath):
+                # Adjust extensions as needed
+                if filename.endswith(('.nrrd', '.nii', '.nii.gz')):
+                    filepath = os.path.join(defPath, filename)
+                    logging.info(f"Loading displacement field: {filepath}")
+                    # Load as vector volume
+                    slicer.util.loadVectorVolume(filepath)
 
 #
 # baselineLoaderTest
@@ -361,7 +479,8 @@ class baselineLoaderTest(ScriptedLoadableModuleTest):
         self.assertEqual(inputScalarRange[0], 0)
         self.assertEqual(inputScalarRange[1], 695)
 
-        outputVolume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
+        outputVolume = slicer.mrmlScene.AddNewNodeByClass(
+            "vtkMRMLScalarVolumeNode")
         threshold = 100
 
         # Test the module logic
