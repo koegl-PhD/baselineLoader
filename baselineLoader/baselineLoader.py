@@ -9,6 +9,7 @@ import qt
 import ctk
 import slicer
 from slicer.ScriptedLoadableModule import *
+"https://www.dropbox.com/scl/fi/sxnnxqi0s4ct0tde14ub5/Dataset297_TotalSegmentator_total_3mm_1559subj.zip?rlkey=tgt9dj2xd78fxgb9dioesl0nb&st=vn6n1r6q&dl=0"
 
 
 class baselineLoader(ScriptedLoadableModule):
